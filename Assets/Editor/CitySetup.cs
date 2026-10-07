@@ -26,9 +26,20 @@ public static class CitySetup
 
     // --- The four districts. Each has its own wall colour, window colour, and building heights. ---
     //                                              Old town                      Finance                        Neon quarter                   Docks
-    private static readonly Color[] WallColours = { new Color(0.10f, 0.08f, 0.06f), new Color(0.05f, 0.07f, 0.11f), new Color(0.09f, 0.05f, 0.11f), new Color(0.07f, 0.07f, 0.07f) };
-    private static readonly Color[] WindowColours = { new Color(1f, 0.8f, 0.4f), new Color(0.6f, 0.85f, 1f), new Color(1f, 0.35f, 0.9f), new Color(1f, 0.4f, 0.2f) };
-    private static readonly float[] LitShare = { 0.25f, 0.5f, 0.35f, 0.12f };          // share of windows that are lit
+    private static readonly Color[] NightWalls = { new Color(0.10f, 0.08f, 0.06f), new Color(0.05f, 0.07f, 0.11f), new Color(0.09f, 0.05f, 0.11f), new Color(0.07f, 0.07f, 0.07f) };
+    private static readonly Color[] NightWindows = { new Color(1f, 0.8f, 0.4f), new Color(0.6f, 0.85f, 1f), new Color(1f, 0.35f, 0.9f), new Color(1f, 0.4f, 0.2f) };
+    private static readonly float[] NightLitShare = { 0.25f, 0.5f, 0.35f, 0.12f };     // share of windows that are lit
+
+    // Daytime: sandstone, blue-grey glass, red brick and concrete. "Lit" windows are just glass catching the sky.
+    private static readonly Color[] DayWalls = { new Color(0.78f, 0.7f, 0.58f), new Color(0.5f, 0.58f, 0.68f), new Color(0.62f, 0.36f, 0.28f), new Color(0.62f, 0.62f, 0.6f) };
+    private static readonly Color[] DayWindows = { new Color(0.55f, 0.7f, 0.85f), new Color(0.75f, 0.88f, 1f), new Color(0.55f, 0.7f, 0.85f), new Color(0.5f, 0.6f, 0.7f) };
+    private static readonly float[] DayLitShare = { 0.5f, 0.6f, 0.45f, 0.3f };
+
+    // The set in use; chosen each time a city is built.
+    private static bool night = true;
+    private static Color[] WallColours = NightWalls;
+    private static Color[] WindowColours = NightWindows;
+    private static float[] LitShare = NightLitShare;
     private static readonly float[] MinHeight = { 15f, 40f, 20f, 16f };
     private static readonly float[] ExtraHeight = { 40f, 90f, 50f, 10f };
     private static readonly float[] TierAbove = { 30f, 60f, 45f, 999f };               // taller than this: add a narrower upper tier
@@ -50,7 +61,24 @@ public static class CitySetup
     [MenuItem("Tools/Sim Racing/Setup Night City")]
     private static void SetupNightCity()
     {
+        BuildCity(true);
+    }
+
+    // The same streets by day, with pavements, lane markings, zebra crossings and traffic.
+    [MenuItem("Tools/Sim Racing/Setup Day City (traffic)")]
+    private static void SetupDayCity()
+    {
+        BuildCity(false);
+    }
+
+    private static void BuildCity(bool buildNight)
+    {
         if (CarSetup.BlockedByPlayMode()) return;
+
+        night = buildNight;
+        WallColours = night ? NightWalls : DayWalls;
+        WindowColours = night ? NightWindows : DayWindows;
+        LitShare = night ? NightLitShare : DayLitShare;
 
         Scene scene = SceneManager.GetActiveScene();
         if (!AssetDatabase.IsValidFolder("Assets/Materials")) AssetDatabase.CreateFolder("Assets", "Materials");
@@ -171,11 +199,43 @@ public static class CitySetup
                 }
             }
 
-            // Dashed line down the middle of the road.
-            for (float distance = -24f; distance <= 24f; distance += 8f)
+            List<int> roadMarks = glowTriangles[RoadMarkGlow];
+            if (night)
             {
-                AddBox(glowVertices, glowUvs, glowTriangles[RoadMarkGlow], middle + along * distance,
-                    alongX ? new Vector3(3f, 0.02f, 0.3f) : new Vector3(0.3f, 0.02f, 3f), 0f);
+                // Dashed line down the middle of the road.
+                for (float distance = -24f; distance <= 24f; distance += 8f)
+                {
+                    AddBox(glowVertices, glowUvs, roadMarks, middle + along * distance,
+                        alongX ? new Vector3(3f, 0.02f, 0.3f) : new Vector3(0.3f, 0.02f, 3f), 0f);
+                }
+            }
+            else
+            {
+                // Daytime road: a 2 m pavement each side leaves four 3 m lanes, two each way.
+                foreach (float side in new[] { -1f, 1f })
+                {
+                    // Pavement along the buildings.
+                    AddBox(buildingVertices, buildingUvs, buildingTriangles[3], middle + across * (side * (StreetWidth / 2f - 1f)),
+                        alongX ? new Vector3(BlockSize, 0.15f, 2f) : new Vector3(2f, 0.15f, BlockSize), 0f);
+
+                    // Dashed line between the two lanes on this side.
+                    for (float distance = -18f; distance <= 18f; distance += 6f)
+                    {
+                        AddBox(glowVertices, glowUvs, roadMarks, middle + across * (side * 3f) + along * distance,
+                            alongX ? new Vector3(2.5f, 0.02f, 0.15f) : new Vector3(0.15f, 0.02f, 2.5f), 0f);
+                    }
+
+                    // Zebra crossing where the street meets the crossing at this end.
+                    for (float stripe = -5f; stripe <= 5f; stripe += 2f)
+                    {
+                        AddBox(glowVertices, glowUvs, roadMarks, middle + along * (side * 21.5f) + across * stripe,
+                            alongX ? new Vector3(3f, 0.02f, 1f) : new Vector3(1f, 0.02f, 3f), 0f);
+                    }
+                }
+
+                // Solid centre line between the two directions.
+                AddBox(glowVertices, glowUvs, roadMarks, middle,
+                    alongX ? new Vector3(BlockSize, 0.02f, 0.25f) : new Vector3(0.25f, 0.02f, BlockSize), 0f);
             }
 
             // Every third street has a covered bridge between the buildings, with a neon strip underneath.
@@ -196,7 +256,7 @@ public static class CitySetup
             Material material = CarSetup.GetOrCreateMaterial("CityBuilding_" + d, Color.white);
             material.mainTexture = CreateWindowTexture("CityWindows_" + d, false, d);
             material.SetTexture("_EmissionMap", CreateWindowTexture("CityWindowsGlow_" + d, true, d));
-            material.SetColor("_EmissionColor", Color.white * 3f);
+            material.SetColor("_EmissionColor", night ? Color.white * 3f : Color.black);   // windows only glow at night
             material.EnableKeyword("_EMISSION");
             material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive;
             material.SetFloat("_Smoothness", 0.3f);
@@ -204,12 +264,14 @@ public static class CitySetup
         }
 
         Material[] glowMaterials = new Material[glowTriangles.Length];
-        glowMaterials[LampGlow] = GetOrCreateGlowMaterial("LampGlow", new Color(1f, 0.75f, 0.4f), 4f);
-        glowMaterials[BeaconGlow] = GetOrCreateGlowMaterial("BeaconGlow", Color.red, 6f);
-        glowMaterials[RoadMarkGlow] = GetOrCreateGlowMaterial("RoadMarkGlow", new Color(0.8f, 0.8f, 0.7f), 0.6f);
+        // By day the lamps are off and the signs are just coloured boards.
+        float glow = night ? 4f : 0.3f;
+        glowMaterials[LampGlow] = GetOrCreateGlowMaterial("LampGlow", new Color(1f, 0.75f, 0.4f), glow);
+        glowMaterials[BeaconGlow] = GetOrCreateGlowMaterial("BeaconGlow", Color.red, night ? 6f : 1f);
+        glowMaterials[RoadMarkGlow] = GetOrCreateGlowMaterial("RoadMarkGlow", new Color(0.9f, 0.9f, 0.85f), night ? 0.6f : 0.2f);
         for (int n = 0; n < NeonColours.Length; n++)
         {
-            glowMaterials[FirstNeonGlow + n] = GetOrCreateGlowMaterial("Neon_" + n, NeonColours[n], 4f);
+            glowMaterials[FirstNeonGlow + n] = GetOrCreateGlowMaterial("Neon_" + n, NeonColours[n], glow);
         }
 
         CreateMeshObject(city, "Buildings", buildingVertices, buildingUvs, buildingTriangles, buildingMaterials);
@@ -271,70 +333,99 @@ public static class CitySetup
         finishStrip.GetComponent<Renderer>().sharedMaterial = GetOrCreateGlowMaterial("FinishGlow", Color.white, 2f);
         Object.DestroyImmediate(finishStrip.GetComponent<Collider>());
 
-        // --- Ground: bigger and dark, like wet tarmac ---
+        // --- Ground: bigger; dark wet tarmac at night, plain grey asphalt by day ---
         GameObject ground = CarSetup.FindRoot(scene, "Ground");
         if (ground != null)
         {
             ground.transform.localScale = new Vector3(40f, 1f, 40f);
-            Material groundMaterial = CarSetup.GetOrCreateMaterial("Ground", new Color(0.3f, 0.3f, 0.35f));
+            Material groundMaterial = CarSetup.GetOrCreateMaterial("Ground", night ? new Color(0.3f, 0.3f, 0.35f) : new Color(0.5f, 0.5f, 0.52f));
             groundMaterial.mainTextureScale = new Vector2(40f, 40f);
-            groundMaterial.SetFloat("_Smoothness", 0.7f);
+            groundMaterial.SetFloat("_Smoothness", night ? 0.7f : 0.2f);
             ground.GetComponent<Renderer>().sharedMaterial = groundMaterial;
         }
 
-        // --- Night: dark foggy sky, dim blue moonlight ---
-        Color night = new Color(0.03f, 0.04f, 0.07f);
-        RenderSettings.skybox = null;
-        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-        RenderSettings.ambientLight = new Color(0.16f, 0.18f, 0.26f);
+        // --- Sky and light ---
+        Color nightSky = new Color(0.03f, 0.04f, 0.07f);
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.Exponential;
-        RenderSettings.fogColor = night;
-        RenderSettings.fogDensity = 0.008f;
+        if (night)
+        {
+            // Dark foggy sky, dim blue moonlight.
+            RenderSettings.skybox = null;
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+            RenderSettings.ambientLight = new Color(0.16f, 0.18f, 0.26f);
+            RenderSettings.fogColor = nightSky;
+            RenderSettings.fogDensity = 0.008f;
+        }
+        else
+        {
+            // Unity's standard blue sky, with a light haze in the distance.
+            RenderSettings.skybox = AssetDatabase.GetBuiltinExtraResource<Material>("Default-Skybox.mat");
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Skybox;
+            RenderSettings.fogColor = new Color(0.75f, 0.82f, 0.9f);
+            RenderSettings.fogDensity = 0.002f;
+        }
+        DynamicGI.UpdateEnvironment();
 
         foreach (GameObject root in scene.GetRootGameObjects())
         {
             Light sun = root.GetComponent<Light>();
             if (sun != null && sun.type == LightType.Directional)
             {
-                sun.color = new Color(0.55f, 0.65f, 1f);
-                sun.intensity = 0.5f;
+                sun.color = night ? new Color(0.55f, 0.65f, 1f) : new Color(1f, 0.96f, 0.88f);
+                sun.intensity = night ? 0.5f : 1.3f;
             }
         }
 
-        // --- Car: back to the start crossing, with two headlights ---
+        // --- Car: back to the start crossing; headlights at night only ---
+        Vector3 start = GridToWorld(Route[1]);
+        Vector3 startDirection = (GridToWorld(Route[2]) - start).normalized;
+
+        // By day the car starts in the left-hand lane, clear of the oncoming traffic.
+        if (!night) start += Vector3.Cross(startDirection, Vector3.up) * 1.5f;
+
         GameObject car = CarSetup.FindRoot(scene, "car");
         if (car != null)
         {
-            Vector3 start = GridToWorld(Route[1]);
-            Vector3 startDirection = GridToWorld(Route[2]) - start;
             car.transform.SetPositionAndRotation(new Vector3(start.x, car.transform.position.y, start.z), Quaternion.LookRotation(startDirection));
 
             CarSetup.DestroyChild(car, "Headlights");
-            GameObject headlights = new GameObject("Headlights");
-            headlights.transform.SetParent(car.transform, false);
-            foreach (float side in new[] { -0.5f, 0.5f })
+            if (night)
             {
-                GameObject lamp = new GameObject("Headlight");
-                lamp.transform.SetParent(headlights.transform, false);
-                lamp.transform.localPosition = new Vector3(side, 0.7f, 2f);
-                lamp.transform.localRotation = Quaternion.Euler(8f, 0f, 0f);   // tilted slightly down onto the road
+                GameObject headlights = new GameObject("Headlights");
+                headlights.transform.SetParent(car.transform, false);
+                foreach (float side in new[] { -0.5f, 0.5f })
+                {
+                    GameObject lamp = new GameObject("Headlight");
+                    lamp.transform.SetParent(headlights.transform, false);
+                    lamp.transform.localPosition = new Vector3(side, 0.7f, 2f);
+                    lamp.transform.localRotation = Quaternion.Euler(8f, 0f, 0f);   // tilted slightly down onto the road
 
-                Light headlight = lamp.AddComponent<Light>();
-                headlight.type = LightType.Spot;
-                headlight.range = 70f;
-                headlight.spotAngle = 70f;
-                headlight.intensity = 60f;
-                headlight.color = new Color(0.9f, 0.95f, 1f);
+                    Light headlight = lamp.AddComponent<Light>();
+                    headlight.type = LightType.Spot;
+                    headlight.range = 70f;
+                    headlight.spotAngle = 70f;
+                    headlight.intensity = 60f;
+                    headlight.color = new Color(0.9f, 0.95f, 1f);
+                }
             }
         }
 
-        // --- Camera: plain dark background that matches the fog, placed behind the car ---
+        // --- Traffic (day only) and obstacles ---
+        if (!night)
+        {
+            Vector3[] corners = new Vector3[Route.Length];
+            for (int i = 0; i < Route.Length; i++) corners[i] = GridToWorld(Route[i]);
+            DriveSetup.BuildTraffic(city, corners, start);
+        }
+        DriveSetup.BuildObstacles(scene);
+
+        // --- Camera: dark background at night, sky by day; placed behind the car ---
         Camera cam = Camera.main;
         if (cam != null)
         {
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = night;
+            cam.clearFlags = night ? CameraClearFlags.SolidColor : CameraClearFlags.Skybox;
+            cam.backgroundColor = nightSky;
             if (car != null)
             {
                 cam.transform.position = car.transform.TransformPoint(new Vector3(0f, 3f, -7f));
@@ -345,7 +436,9 @@ public static class CitySetup
         AssetDatabase.SaveAssets();
         EditorSceneManager.MarkSceneDirty(scene);
         Selection.activeGameObject = city;
-        Debug.Log("Night city set up: follow the open streets; glowing orange barriers close the side roads.");
+        Debug.Log(night
+            ? "Night city set up: follow the open streets; glowing orange barriers close the side roads."
+            : "Day city set up: keep left, overtake the traffic, and follow the open streets round the lap.");
     }
 
     private static List<int>[] NewLists(int count)
@@ -363,7 +456,7 @@ public static class CitySetup
 
     // Adds a box standing on the point "baseCentre" to a mesh being built: four walls and a roof.
     // uvTile is how many metres one repeat of the texture covers; 0 means a plain, windowless surface.
-    private static void AddBox(List<Vector3> vertices, List<Vector2> uvs, List<int> triangles, Vector3 baseCentre, Vector3 size, float uvTile)
+    internal static void AddBox(List<Vector3> vertices, List<Vector2> uvs, List<int> triangles, Vector3 baseCentre, Vector3 size, float uvTile)
     {
         Vector3 min = baseCentre - new Vector3(size.x / 2f, 0f, size.z / 2f);
         Vector3 max = baseCentre + new Vector3(size.x / 2f, size.y, size.z / 2f);
@@ -435,7 +528,7 @@ public static class CitySetup
     }
 
     // A material that glows in its own colour (brightness above 1 gives a bloom halo).
-    private static Material GetOrCreateGlowMaterial(string materialName, Color color, float brightness)
+    internal static Material GetOrCreateGlowMaterial(string materialName, Color color, float brightness)
     {
         Material material = CarSetup.GetOrCreateMaterial(materialName, color);
         material.SetColor("_EmissionColor", color * brightness);

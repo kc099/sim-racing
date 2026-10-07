@@ -83,7 +83,7 @@ public static class CarSetup
 
     // Adds CameraFollow to the Main Camera and points it at the car.
     [MenuItem("Tools/Sim Racing/Setup Camera Follow")]
-    private static void SetupCameraFollow()
+    internal static void SetupCameraFollow()
     {
         if (BlockedByPlayMode()) return;
 
@@ -285,7 +285,7 @@ public static class CarSetup
         }
 
         // Start fresh each time so running this twice doesn't create duplicates.
-        foreach (string oldName in new[] { "Track", "City" })
+        foreach (string oldName in new[] { "Track", "City", "Obstacles" })
         {
             GameObject oldObject = FindRoot(scene, oldName);
             if (oldObject != null) Object.DestroyImmediate(oldObject);
@@ -419,7 +419,7 @@ public static class CarSetup
 
     // Builds the on-screen display: a Canvas with three TextMeshPro texts and a RaceUI component.
     [MenuItem("Tools/Sim Racing/Setup Race UI")]
-    private static void SetupRaceUI()
+    internal static void SetupRaceUI()
     {
         if (BlockedByPlayMode()) return;
 
@@ -437,7 +437,7 @@ public static class CarSetup
         GameObject lapSystem = FindRoot(scene, "LapSystem");
         if (car == null || lapSystem == null)
         {
-            Debug.LogError("Run Setup Test Car and Setup Lap System first.");
+            Debug.LogError("Run Setup Test Car and one of the track setups first.");
             return;
         }
 
@@ -500,14 +500,63 @@ public static class CarSetup
         SetupCarModel("race-future.fbx", "NightCar", new Color(0.08f, 0.08f, 0.1f), 0.85f);
     }
 
-    // modelFile: which model in the KenneyCarKit folder to use.
+    // An open-wheel formula car in its own colours, with faster gearing, downforce and a 360 km/h speedometer.
+    [MenuItem("Tools/Sim Racing/Setup Car Model/Formula Car")]
+    internal static void SetupFormulaCarModel()
+    {
+        SetupCarModel("raceCarRed.fbx", null, Color.white, 0.5f, "Assets/Models/KenneyRacingKit/");
+        if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+
+        Scene scene = SceneManager.GetActiveScene();
+        GameObject car = FindRoot(scene, "car");
+        CarController controller = car != null ? car.GetComponent<CarController>() : null;
+        if (controller == null || car.transform.Find("Model") == null) return;
+
+        // Formula car tuning: eight gears up to 330 km/h, stronger brakes, and downforce for fast corners.
+        controller.motorForce = 2200f;
+        controller.brakeForce = 6000f;
+        controller.downforce = 3f;
+        controller.gearTopSpeedsKmh = new[] { 70f, 110f, 150f, 190f, 230f, 270f, 300f, 330f };
+        controller.highSpeedSteerAngle = 6f;
+        controller.fullSteerSpeedKmh = 200f;
+
+        // At these speeds the car could skip through a thin wall between two physics steps without this.
+        car.GetComponent<Rigidbody>().collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+        // Sit the driver and bonnet cameras higher, so the long nose doesn't hide the road.
+        CameraFollow cameraFollow = Camera.main != null ? Camera.main.GetComponent<CameraFollow>() : null;
+        if (cameraFollow != null)
+        {
+            cameraFollow.driverOffset = new Vector3(0f, 1.6f, -0.3f);
+            cameraFollow.bonnetOffset = new Vector3(0f, 1.3f, 1.2f);
+            cameraFollow.lookDownAngle = 6f;
+        }
+
+        // Stretch the speedometer scale from 240 to 360 km/h, if the dashboard has been set up.
+        GameObject canvas = FindRoot(scene, "RaceCanvas");
+        Dashboard dashboard = canvas != null ? canvas.GetComponentInChildren<Dashboard>(true) : null;
+        if (dashboard != null)
+        {
+            dashboard.maxSpeedKmh = 360f;
+            int label = 0;
+            foreach (Transform child in dashboard.speedNeedle.parent)
+            {
+                if (child.name.StartsWith("Label_")) child.GetComponent<TMP_Text>().text = (label++ * 60).ToString();
+            }
+        }
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        Debug.Log("Formula car set up: 8 gears, top speed about 330 km/h.");
+    }
+
+    // modelFile: which model in the folder to use.
     // tint: multiplied with the model's colours (white = unchanged, near-black = black car).
     // smoothness: 0 = matte, 1 = mirror-like.
-    private static void SetupCarModel(string modelFile, string materialName, Color tint, float smoothness)
+    // materialName: null keeps the colours that come with the model.
+    private static void SetupCarModel(string modelFile, string materialName, Color tint, float smoothness, string folder = "Assets/Models/KenneyCarKit/")
     {
         if (BlockedByPlayMode()) return;
 
-        const string folder = "Assets/Models/KenneyCarKit/";
         Scene scene = SceneManager.GetActiveScene();
         GameObject car = FindRoot(scene, "car");
         CarController controller = car != null ? car.GetComponent<CarController>() : null;
@@ -520,6 +569,9 @@ public static class CarSetup
 
         // Remove a model left over from an earlier run, then put the car upright near the ground.
         DestroyChild(car, "Model");
+        // The fitting below needs the car unrotated at the centre; it is put back where it was at the end.
+        Vector3 placedPosition = car.transform.position;
+        Quaternion placedRotation = car.transform.rotation;
         car.transform.SetPositionAndRotation(new Vector3(0f, 0.3f, 0f), Quaternion.identity);
 
         // Add a copy of the model under the car and scale it to a realistic 4.2 m length.
@@ -534,12 +586,13 @@ public static class CarSetup
         Renderer bodyRenderer = null;
         foreach (Renderer part in model.GetComponentsInChildren<Renderer>())
         {
-            if (part.name.Contains("wheel")) wheels.Add(part);
+            if (part.name.ToLower().Contains("wheel")) wheels.Add(part);
             else if (part.name == "body") bodyRenderer = part;
         }
         if (wheels.Count != 4)
         {
             Object.DestroyImmediate(model);
+            car.transform.SetPositionAndRotation(placedPosition, placedRotation);
             Debug.LogError("Expected 4 wheel parts in the model but found " + wheels.Count + ".");
             return;
         }
@@ -548,7 +601,7 @@ public static class CarSetup
         float frontZ = 0f, backZ = 0f;
         foreach (Renderer wheel in wheels)
         {
-            if (wheel.name.Contains("front")) frontZ += wheel.bounds.center.z;
+            if (wheel.name.ToLower().Contains("front")) frontZ += wheel.bounds.center.z;
             else backZ += wheel.bounds.center.z;
         }
         if (frontZ < backZ) model.transform.Rotate(0f, 180f, 0f);
@@ -560,13 +613,13 @@ public static class CarSetup
 
         // One material using the model's colour texture.
         if (!AssetDatabase.IsValidFolder("Assets/Materials")) AssetDatabase.CreateFolder("Assets", "Materials");
-        Material material = GetOrCreateMaterial(materialName, tint);
-        material.SetFloat("_Smoothness", smoothness);
-        material.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(folder + "Textures/colormap.png");
+        Material material = materialName != null ? GetOrCreateMaterial(materialName, tint) : null;
+        if (material != null) material.SetFloat("_Smoothness", smoothness);
+        if (material != null) material.mainTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(folder + "Textures/colormap.png");
         foreach (Renderer part in model.GetComponentsInChildren<Renderer>())
         {
             Material[] materials = part.sharedMaterials;
-            for (int i = 0; i < materials.Length; i++) materials[i] = material;
+            for (int i = 0; material != null && i < materials.Length; i++) materials[i] = material;
             part.sharedMaterials = materials;
         }
 
@@ -612,6 +665,9 @@ public static class CarSetup
         // The pivot is now at the bottom of the car, so the centre of mass sits just above it.
         controller.centerOfMassOffset = new Vector3(0f, 0.2f, 0f);
 
+        // Back to where the car was on the track, facing the same way.
+        car.transform.SetPositionAndRotation(new Vector3(placedPosition.x, 0.3f, placedPosition.z), placedRotation);
+
         AssetDatabase.SaveAssets();
         EditorSceneManager.MarkSceneDirty(scene);
         Selection.activeGameObject = car;
@@ -619,7 +675,7 @@ public static class CarSetup
     }
 
     // The box that encloses every visible part of an object.
-    private static Bounds GetBounds(GameObject target)
+    internal static Bounds GetBounds(GameObject target)
     {
         Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
         Bounds bounds = renderers[0].bounds;
